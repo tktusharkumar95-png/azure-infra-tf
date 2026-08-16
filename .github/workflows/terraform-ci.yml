@@ -1,0 +1,81 @@
+name: "Terraform CI (Plan & Scan)"
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "azure-infra-tf/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # 1. Gitleaks Security Scan
+  gitleaks-scan:
+    name: "Gitleaks Security Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 2. Terraform Format, Init, Validate & Plan
+  terraform-ci:
+    name: "Terraform Plan"
+    needs: gitleaks-scan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./azure-infra-tf/environment/prod
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: Terraform Format Check
+        run: terraform fmt -check
+
+      - name: Terraform Init
+        run: terraform init
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -out=tfplan
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+  # 3. Auto Assign Reviewer
+  assign-reviewer:
+    name: "Assign Reviewer"
+    needs: terraform-ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add Reviewer via GitHub CLI
+        run: |
+          gh pr edit ${{ github.event.pull_request.number }} --add-reviewer shripalsinghdevops
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
